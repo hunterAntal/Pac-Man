@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Neo-Brutalist Pac-Man</title>
+  <style>
+    /* Reset margins and set a bold, high-contrast look */
+    body {
+      margin: 0;
+      background: #fff;
+      color: #000;
+      font-family: Arial, sans-serif;
+    }
+    /* Center the canvas and add a bold border */
+    canvas {
+      display: block;
+      margin: 20px auto;
+      background: #fff;
+      border: 5px solid #000;
+    }
+  </style>
+</head>
+<body>
+  <!-- The Canvas element where the game is drawn -->
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+  /**********************************************************
+   * Neo-Brutalist Pac-Man-Inspired Game
+   * 
+   * This game uses a grid-based layout where:
+   *  - 1 represents a wall.
+   *  - 0 represents a pellet.
+   *  - 2 represents a power-up.
+   *  - 3 represents an empty cell (pellet eaten).
+   *
+   * The code uses ES6 classes to separate game logic into
+   * modular pieces: Game, Player, and Ghost.
+   *
+   * Sound effects can be added using the Audio API.
+   **********************************************************/
+
+  (function() {
+    // Global constants
+    const TILE_SIZE = 32;          // Size of one grid cell in pixels
+    const GRID_WIDTH = 20;         // Number of columns in the grid
+    const GRID_HEIGHT = 20;        // Number of rows in the grid
+    const CANVAS_WIDTH = TILE_SIZE * GRID_WIDTH;
+    const CANVAS_HEIGHT = TILE_SIZE * GRID_HEIGHT;
+
+    // Direction definitions for easy use
+    const DIRECTIONS = {
+      LEFT:  { x: -1, y:  0 },
+      RIGHT: { x:  1, y:  0 },
+      UP:    { x:  0, y: -1 },
+      DOWN:  { x:  0, y:  1 }
+    };
+
+    /**********************************************************
+     * Create a simple grid-based map.
+     * The outer border is a wall (1), and inside every cell
+     * initially has a pellet (0). A few inner walls and power-ups
+     * (2) are added for demonstration.
+     **********************************************************/
+    let map = [];
+    for (let row = 0; row < GRID_HEIGHT; row++) {
+      map[row] = [];
+      for (let col = 0; col < GRID_WIDTH; col++) {
+        // Outer border cells are walls
+        if (row === 0 || row === GRID_HEIGHT - 1 || col === 0 || col === GRID_WIDTH - 1) {
+          map[row][col] = 1;
+        } else {
+          map[row][col] = 0; // Pellet present by default
+        }
+      }
+    }
+    // Add a vertical wall in the center (leaving a gap at top and bottom)
+    for (let row = 3; row < GRID_HEIGHT - 3; row++) {
+      map[row][Math.floor(GRID_WIDTH / 2)] = 1;
+    }
+    // Add a horizontal wall in the center (leaving gaps at left and right)
+    for (let col = 3; col < GRID_WIDTH - 3; col++) {
+      map[Math.floor(GRID_HEIGHT / 2)][col] = 1;
+    }
+    // Place power-ups in each corner inside the border
+    map[1][1] = 2;
+    map[1][GRID_WIDTH - 2] = 2;
+    map[GRID_HEIGHT - 2][1] = 2;
+    map[GRID_HEIGHT - 2][GRID_WIDTH - 2] = 2;
+
+    /**********************************************************
+     * Base class for movable entities (Player and Ghost)
+     **********************************************************/
+    class Entity {
+      /**
+       * @param {number} x - x-coordinate (in pixels) of the top-left of the sprite's grid cell.
+       * @param {number} y - y-coordinate (in pixels).
+       * @param {number} speed - Movement speed (pixels per second).
+       */
+      constructor(x, y, speed) {
+        this.x = x;
+        this.y = y;
+        this.speed = speed;
+        // Current movement direction (x and y are -1, 0, or 1)
+        this.direction = { x: 0, y: 0 };
+      }
+
+      /**
+       * Update position based on elapsed time.
+       * @param {number} dt - Delta time in seconds.
+       */
+      update(dt) {
+        this.x += this.direction.x * this.speed * dt;
+        this.y += this.direction.y * this.speed * dt;
+      }
+
+      /**
+       * Draw the entity. To be implemented by subclasses.
+       * @param {CanvasRenderingContext2D} ctx - Canvas drawing context.
+       */
+      draw(ctx) { }
+    }
+
+    /**********************************************************
+     * Player class: Implements Pac-Man mechanics.
+     **********************************************************/
+    class Player extends Entity {
+      constructor(x, y, speed) {
+        super(x, y, speed);
+        // Set the drawing radius to be a fraction of the tile size.
+        this.radius = TILE_SIZE * 0.4;
+        // Store the next direction so that inputs feel responsive.
+        this.nextDirection = { x: 0, y: 0 };
+      }
+
+      /**
+       * Update player position and handle pellet/power-up consumption.
+       * @param {number} dt - Delta time (seconds).
+       * @param {Array} map - The grid map.
+       */
+      update(dt, map) {
+        // Determine which grid cell the player is in.
+        let gridPos = {
+          col: Math.floor((this.x + TILE_SIZE / 2) / TILE_SIZE),
+          row: Math.floor((this.y + TILE_SIZE / 2) / TILE_SIZE)
+        };
+        // Calculate the center of that cell.
+        let centerOfCell = {
+          x: gridPos.col * TILE_SIZE + TILE_SIZE / 2,
+          y: gridPos.row * TILE_SIZE + TILE_SIZE / 2
+        };
+        // When near the center, try to change to the next input direction.
+        let distanceToCenter = Math.hypot((this.x + TILE_SIZE / 2) - centerOfCell.x,
+                                          (this.y + TILE_SIZE / 2) - centerOfCell.y);
+        if (distanceToCenter < 2 && this.canMove(gridPos.row, gridPos.col, this.nextDirection, map)) {
+          this.direction = this.nextDirection;
+        }
+
+        // Compute a tentative next position.
+        let nextX = this.x + this.direction.x * this.speed * dt;
+        let nextY = this.y + this.direction.y * this.speed * dt;
+        // Check the grid cell that the player’s center would move into.
+        let futureCenter = { x: nextX + TILE_SIZE / 2, y: nextY + TILE_SIZE / 2 };
+        let futureCol = Math.floor(futureCenter.x / TILE_SIZE);
+        let futureRow = Math.floor(futureCenter.y / TILE_SIZE);
+        // If that cell is a wall, snap back to center.
+        if (map[futureRow][futureCol] === 1) {
+          this.x = centerOfCell.x - TILE_SIZE / 2;
+          this.y = centerOfCell.y - TILE_SIZE / 2;
+          this.direction = { x: 0, y: 0 };
+        } else {
+          // Otherwise, update the player's position.
+          this.x = nextX;
+          this.y = nextY;
+        }
+
+        // Check for pellet or power-up consumption.
+        if (map[gridPos.row][gridPos.col] === 0 || map[gridPos.row][gridPos.col] === 2) {
+          map[gridPos.row][gridPos.col] = 3; // Mark as empty.
+          // Play sound effect here, e.g., eatSound.play();
+        }
+      }
+
+      /**
+       * Check if moving in a given direction from the current cell is allowed.
+       * @param {number} row - Current row.
+       * @param {number} col - Current column.
+       * @param {Object} direction - Object with x and y (-1, 0, or 1).
+       * @param {Array} map - The grid map.
+       * @returns {boolean} True if the next cell is not a wall.
+       */
+      canMove(row, col, direction, map) {
+        let targetRow = row + direction.y;
+        let targetCol = col + direction.x;
+        if (targetRow < 0 || targetRow >= GRID_HEIGHT || targetCol < 0 || targetCol >= GRID_WIDTH)
+          return false;
+        return map[targetRow][targetCol] !== 1;
+      }
+
+      /**
+       * Draw Pac-Man as a circle with a wedge (mouth).
+       * @param {CanvasRenderingContext2D} ctx - Canvas drawing context.
+       */
+      draw(ctx) {
+        let centerX = this.x + TILE_SIZE / 2;
+        let centerY = this.y + TILE_SIZE / 2;
+        ctx.fillStyle = "#FFC107";  // Bold yellow
+        ctx.beginPath();
+        // Determine the facing angle based on movement.
+        let angleOffset = 0;
+        if (this.direction.x === 1) {        // Right
+          angleOffset = 0;
+        } else if (this.direction.x === -1) {  // Left
+          angleOffset = Math.PI;
+        } else if (this.direction.y === 1) {   // Down
+          angleOffset = Math.PI / 2;
+        } else if (this.direction.y === -1) {  // Up
+          angleOffset = 3 * Math.PI / 2;
+        }
+        // Open mouth by 30° (π/6 radians) on each side.
+        let mouthAngle = Math.PI / 6;
+        ctx.moveTo(centerX, centerY);
+        ctx.arc(centerX, centerY, this.radius, angleOffset + mouthAngle, angleOffset - mouthAngle, true);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    /**********************************************************
+     * Ghost class: Moves with a simple AI that chases the player.
+     **********************************************************/
+    class Ghost extends Entity {
+      /**
+       * @param {number} x - x-coordinate (pixels).
+       * @param {number} y - y-coordinate (pixels).
+       * @param {number} speed - Speed (pixels per second).
+       * @param {string} color - CSS color for the ghost.
+       */
+      constructor(x, y, speed, color) {
+        super(x, y, speed);
+        this.radius = TILE_SIZE * 0.4;
+        this.color = color || "#D32F2F"; // Default: bold red
+      }
+
+      /**
+       * Update ghost position with a simple “chase” AI.
+       * @param {number} dt - Delta time in seconds.
+       * @param {Array} map - The grid map.
+       * @param {Player} player - The player object.
+       */
+      update(dt, map, player) {
+        // Determine ghost's current grid cell.
+        let gridPos = {
+          col: Math.floor((this.x + TILE_SIZE / 2) / TILE_SIZE),
+          row: Math.floor((this.y + TILE_SIZE / 2) / TILE_SIZE)
+        };
+        let centerOfCell = {
+          x: gridPos.col * TILE_SIZE + TILE_SIZE / 2,
+          y: gridPos.row * TILE_SIZE + TILE_SIZE / 2
+        };
+        let distanceToCenter = Math.hypot((this.x + TILE_SIZE / 2) - centerOfCell.x,
+                                          (this.y + TILE_SIZE / 2) - centerOfCell.y);
+        // Only decide a new direction when near the center of a cell.
+        if (distanceToCenter < 2) {
+          let possibleDirections = [];
+          // Check each direction (except the reverse of the current direction).
+          for (let key in DIRECTIONS) {
+            let d = DIRECTIONS[key];
+            if (this.direction.x === -d.x && this.direction.y === -d.y)
+              continue;
+            if (this.canMove(gridPos.row, gridPos.col, d, map)) {
+              possibleDirections.push(d);
+            }
+          }
+          if (possibleDirections.length > 0) {
+            // Choose the direction that minimizes the squared distance to the player.
+            let bestDir = possibleDirections[0];
+            let bestDist = Infinity;
+            for (let d of possibleDirections) {
+              let newRow = gridPos.row + d.y;
+              let newCol = gridPos.col + d.x;
+              let dx = (newCol * TILE_SIZE + TILE_SIZE / 2) - (player.x + TILE_SIZE / 2);
+              let dy = (newRow * TILE_SIZE + TILE_SIZE / 2) - (player.y + TILE_SIZE / 2);
+              let dist = dx * dx + dy * dy;
+              if (dist < bestDist) {
+                bestDist = dist;
+                bestDir = d;
+              }
+            }
+            this.direction = bestDir;
+          } else {
+            // If no move is possible, stop.
+            this.direction = { x: 0, y: 0 };
+          }
+        }
+
+        // Attempt to move in the chosen direction.
+        let nextX = this.x + this.direction.x * this.speed * dt;
+        let nextY = this.y + this.direction.y * this.speed * dt;
+        let futureCenter = { x: nextX + TILE_SIZE / 2, y: nextY + TILE_SIZE / 2 };
+        let futureCol = Math.floor(futureCenter.x / TILE_SIZE);
+        let futureRow = Math.floor(futureCenter.y / TILE_SIZE);
+        if (map[futureRow][futureCol] !== 1) {
+          this.x = nextX;
+          this.y = nextY;
+        } else {
+          // Snap to center if hitting a wall.
+          this.x = centerOfCell.x - TILE_SIZE / 2;
+          this.y = centerOfCell.y - TILE_SIZE / 2;
+          this.direction = { x: 0, y: 0 };
+        }
+      }
+
+      /**
+       * Check if the ghost can move in the specified direction.
+       * @param {number} row - Current row.
+       * @param {number} col - Current column.
+       * @param {Object} direction - Direction to test.
+       * @param {Array} map - The grid map.
+       * @returns {boolean} True if the cell in that direction is not a wall.
+       */
+      canMove(row, col, direction, map) {
+        let targetRow = row + direction.y;
+        let targetCol = col + direction.x;
+        if (targetRow < 0 || targetRow >= GRID_HEIGHT || targetCol < 0 || targetCol >= GRID_WIDTH)
+          return false;
+        return map[targetRow][targetCol] !== 1;
+      }
+
+      /**
+       * Draw the ghost using geometric shapes.
+       * @param {CanvasRenderingContext2D} ctx - Canvas drawing context.
+       */
+      draw(ctx) {
+        let centerX = this.x + TILE_SIZE / 2;
+        let centerY = this.y + TILE_SIZE / 2;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        // Draw the rounded head (a half circle).
+        ctx.arc(centerX, centerY, this.radius, Math.PI, 2 * Math.PI);
+        // Draw the rectangular “body” below the head.
+        ctx.lineTo(centerX + this.radius, centerY + this.radius);
+        ctx.lineTo(centerX - this.radius, centerY + this.radius);
+        ctx.closePath();
+        ctx.fill();
+        // Optional: Draw eyes to give personality.
+        ctx.fillStyle = "#FFF";
+        ctx.beginPath();
+        ctx.arc(centerX - this.radius / 2, centerY - this.radius / 3, this.radius / 4, 0, 2 * Math.PI);
+        ctx.arc(centerX + this.radius / 2, centerY - this.radius / 3, this.radius / 4, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    /**********************************************************
+     * Game class: Manages the game loop, input, and overall state.
+     **********************************************************/
+    class Game {
+      constructor(canvas) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext("2d");
+        this.lastTime = performance.now();
+        // Use the pre-built map.
+        this.map = map;
+        // Initialize the player at cell (1,1)
+        this.player = new Player(TILE_SIZE, TILE_SIZE, 100); // 100 pixels/second
+        // Initialize ghosts; here we create one ghost for demonstration.
+        this.ghosts = [];
+        this.ghosts.push(new Ghost((GRID_WIDTH - 2) * TILE_SIZE, (GRID_HEIGHT - 2) * TILE_SIZE, 80));
+        // Bind keyboard inputs.
+        this.bindKeys();
+        // Start the game loop.
+        requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
+      }
+
+      /**
+       * Listen for arrow or WASD key presses to change the player’s direction.
+       */
+      bindKeys() {
+        window.addEventListener("keydown", (e) => {
+          switch (e.key) {
+            case "ArrowUp":
+            case "w":
+            case "W":
+              this.player.nextDirection = DIRECTIONS.UP;
+              break;
+            case "ArrowDown":
+            case "s":
+            case "S":
+              this.player.nextDirection = DIRECTIONS.DOWN;
+              break;
+            case "ArrowLeft":
+            case "a":
+            case "A":
+              this.player.nextDirection = DIRECTIONS.LEFT;
+              break;
+            case "ArrowRight":
+            case "d":
+            case "D":
+              this.player.nextDirection = DIRECTIONS.RIGHT;
+              break;
+          }
+        });
+      }
+
+      /**
+       * The main game loop.
+       * @param {DOMHighResTimeStamp} timestamp - The current time.
+       */
+      gameLoop(timestamp) {
+        // Calculate delta time in seconds.
+        let dt = (timestamp - this.lastTime) / 1000;
+        this.lastTime = timestamp;
+        this.update(dt);
+        this.draw();
+        requestAnimationFrame((ts) => this.gameLoop(ts));
+      }
+
+      /**
+       * Update game entities.
+       * @param {number} dt - Delta time (seconds).
+       */
+      update(dt) {
+        this.player.update(dt, this.map);
+        for (let ghost of this.ghosts) {
+          ghost.update(dt, this.map, this.player);
+        }
+        // Check for collisions between the player and ghosts.
+        for (let ghost of this.ghosts) {
+          let dx = (this.player.x + TILE_SIZE / 2) - (ghost.x + TILE_SIZE / 2);
+          let dy = (this.player.y + TILE_SIZE / 2) - (ghost.y + TILE_SIZE / 2);
+          if (Math.hypot(dx, dy) < this.player.radius + ghost.radius) {
+            // In a full game, you might deduct lives or trigger a "game over" state.
+            console.log("Collision with ghost!");
+          }
+        }
+      }
+
+      /**
+       * Draw the entire game: map, entities, and UI.
+       */
+      draw() {
+        // Clear the canvas.
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        // Draw the grid map.
+        for (let row = 0; row < GRID_HEIGHT; row++) {
+          for (let col = 0; col < GRID_WIDTH; col++) {
+            let cell = this.map[row][col];
+            let x = col * TILE_SIZE;
+            let y = row * TILE_SIZE;
+            if (cell === 1) {
+              // Draw walls as bold black squares.
+              this.ctx.fillStyle = "#000";
+              this.ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+            } else {
+              // Draw the background.
+              this.ctx.fillStyle = "#fff";
+              this.ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+              // Draw pellets (small dot) or power-ups (larger dot).
+              if (cell === 0) {
+                this.ctx.fillStyle = "#000";
+                this.ctx.beginPath();
+                this.ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 3, 0, 2 * Math.PI);
+                this.ctx.fill();
+              } else if (cell === 2) {
+                this.ctx.fillStyle = "#000";
+                this.ctx.beginPath();
+                this.ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 6, 0, 2 * Math.PI);
+                this.ctx.fill();
+              }
+            }
+          }
+        }
+        // Draw the player and ghosts.
+        this.player.draw(this.ctx);
+        for (let ghost of this.ghosts) {
+          ghost.draw(this.ctx);
+        }
+        // Draw a simple neo-brutalist UI overlay.
+        this.drawUI();
+      }
+
+      /**
+       * Draw user interface elements (score, lives, etc.) using bold fonts.
+       */
+      drawUI() {
+        this.ctx.fillStyle = "#000";
+        this.ctx.font = "bold 20px Arial";
+        // Example: Display a static score and lives.
+        this.ctx.fillText("Score: 0", 10, 25);
+        this.ctx.fillText("Lives: 3", this.canvas.width - 100, 25);
+      }
+    }
+
+    /**********************************************************
+     * Sound Effects (stub)
+     *
+     * For example, you could add:
+     *    const eatSound = new Audio('eat.wav');
+     * And then call eatSound.play() in the player update method
+     * when a pellet or power-up is consumed.
+     **********************************************************/
+
+    /**********************************************************
+     * Initialization: Set up the canvas and start the game.
+     **********************************************************/
+    window.onload = function() {
+      const canvas = document.getElementById("gameCanvas");
+      canvas.width = CANVAS_WIDTH;
+      canvas.height = CANVAS_HEIGHT;
+      const game = new Game(canvas);
+    };
+
+  })();
+  </script>
+</body>
+</html>
