@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pac-Man Game</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: black;
+        }
+
+        #gameBoard {
+            border: 2px solid blue;
+            background-color: rgb(255, 255, 255);
+        }
+
+        .score {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-family: Arial;
+            font-size: 20px;
+        }
+
+        #pacman {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            background-color: yellow;
+            border-radius: 50%;
+            animation: mouth 1s infinite;
+            display: none;
+        }
+
+        @keyframes mouth {
+            0%, 100% { transform: rotate(0deg); }
+            50% { transform: rotate(-90deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="score">Score: <span id="score">0</span></div>
+    <canvas id="gameBoard" width="420" height="420"></canvas>
+    <div id="pacman"></div>
+
+    <script>
+        const canvas = document.getElementById('gameBoard');
+        const ctx = canvas.getContext('2d');
+        const PACMAN_SIZE = 15;
+        let score = 0;
+
+        // Set up the game board
+        const GRID_SIZE = 28;
+        let grid = [];
+        for (let i = 0; i < GRID_SIZE; i++) {
+            grid[i] = new Array(GRID_SIZE).fill(0);
+        }
+
+        // Create maze walls
+        function createMaze() {
+            for (let i = 0; i < GRID_SIZE; i++) {
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    if ((i === 1 || i === GRID_SIZE - 2) &&
+                        (j > 3 && j < GRID_SIZE - 4)) {
+                        grid[i][j] = 1;
+                    }
+                    if ((j === 1 || j === GRID_SIZE - 2) &&
+                        (i > 3 && i < GRID_SIZE - 4)) {
+                        grid[i][j] = 1;
+                    }
+                }
+            }
+
+            // Add some walls to create a simple maze
+            // You can modify this pattern to make different mazes
+            for (let i = 4; i < GRID_SIZE - 4; i++) {
+                if ((i % 2 === 0 && j > 3) || 
+                    (j % 2 === 0 && i > 3)) {
+                    grid[i][j] = 1;
+                }
+            }
+        }
+
+        createMaze();
+
+        // Initialize Pac-Man
+        let pacmanX = 14;
+        let pacmanY = 14;
+        let direction = 0;
+
+        // Set up ghost dots
+        let ghosts = [];
+        for (let i = 0; i < 3; i++) {
+            ghosts.push({
+                x: Math.floor(Math.random() * GRID_SIZE),
+                y: Math.floor(Math.random() * GRID_SIZE)
+            });
+        }
+
+        function drawGameBoard() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw maze walls
+            for (let i = 0; i < GRID_SIZE; i++) {
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    if (grid[i][j] === 1) {
+                        ctx.fillStyle = 'blue';
+                        ctx.fillRect(j * PACMAN_SIZE, i * PACMAN_SIZE,
+                                   PACMAN_SIZE - 1, PACMAN_SIZE - 1);
+                    }
+                }
+            }
+
+            // Draw Pac-Man
+            const pacmanElement = document.getElementById('pacman');
+            pacmanElement.style.left = (pacmanX * PACMAN_SIZE + 
+PACMAN_SIZE/2) + 'px';
+            pacmanElement.style.top = (pacmanY * PACMAN_SIZE + 
+PACMAN_SIZE/2) + 'px';
+            pacmanElement.style.display = 'block';
+
+            // Draw Ghost dots
+            ghosts.forEach(ghost => {
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc((ghost.x * PACMAN_SIZE) + PACMAN_SIZE/2,
+                        (ghost.y * PACMAN_SIZE) + PACMAN_SIZE/2,
+                        3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Check for collisions
+            ghosts.forEach(ghost => {
+                if (Math.abs(pacmanX - ghost.x) < 1 && 
+                    Math.abs(pacmanY - ghost.y) < 1) {
+                    alert('Game Over! Score: ' + score);
+                    location.reload();
+                }
+            });
+
+            // Check for pellet collection
+            ghosts.forEach(ghost => {
+                if (Math.abs(pacmanX - ghost.x) < 1 && 
+                    Math.abs(pacmanY - ghost.y) < 1) {
+                    score += 10;
+                    document.getElementById('score').textContent = score;
+                    ghosts.splice(ghosts.indexOf(ghost), 1);
+                }
+            });
+        }
+
+        // Handle keyboard input
+        document.addEventListener('keydown', (event) => {
+            const speed = 2;
+            switch(event.key) {
+                case 'ArrowLeft':
+                    direction = -speed;
+                    if (!grid[pacmanY][pacmanX - 1]) {
+                        pacmanX -= speed;
+                    }
+                    break;
+                case 'ArrowRight':
+                    direction = speed;
+                    if (!grid[pacmanY][pacmanX + 1]) {
+                        pacmanX += speed;
+                    }
+                    break;
+                case 'ArrowUp':
+                    if (!grid[pacmanY - 1][pacmanX]) {
+                        pacmanY -= speed;
+                    }
+                    break;
+                case 'ArrowDown':
+                    if (!grid[pacmanY + 1][pacmanX]) {
+                        pacmanY += speed;
+                    }
+                    break;
+            }
+
+            // Move ghosts randomly
+            ghosts.forEach(ghost => {
+                const ghostSpeed = 0.5;
+                if (Math.random() < 0.2) {
+                    const directions = ['left', 'right', 'up', 'down'];
+                    const moveDirection = 
+directions[Math.floor(Math.random() * directions.length)];
+                    switch(moveDirection) {
+                        case 'left':
+                            if (!grid[ghost.y][ghost.x - 1]) ghost.x--;
+                            break;
+                        case 'right':
+                            if (!grid[ghost.y][ghost.x + 1]) ghost.x++;
+                            break;
+                        case 'up':
+                            if (!grid[ghost.y - 1][ghost.x]) ghost.y--;
+                            break;
+                        case 'down':
+                            if (!grid[ghost.y + 1][ghost.x]) ghost.y++;
+                            break;
+                    }
+                }
+            });
+
+            drawGameBoard();
+        });
+
+        // Start the game
+        document.addEventListener('keydown', () => {
+            setInterval(drawGameBoard, 100);
+        });
+    </script>
+</body>
+</html>
